@@ -41,10 +41,14 @@ def choose_requirement(primary, secondary):
 
 
 def get_version():
-    version_file = 'mmcv/version.py'
+    version_file = os.path.join(os.path.dirname(__file__), 'mmcv',
+                                'version.py')
+    version_ns = {}
     with open(version_file, encoding='utf-8') as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
+        exec(compile(f.read(), version_file, 'exec'), version_ns)
+    if '__version__' not in version_ns:
+        raise RuntimeError(f'Unable to find __version__ in {version_file}')
+    return version_ns['__version__']
 
 
 def parse_requirements(fname='requirements/runtime.txt', with_version=True):
