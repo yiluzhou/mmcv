@@ -2,7 +2,10 @@ import glob
 import os
 import platform
 import re
-from pkg_resources import DistributionNotFound, get_distribution, parse_version
+from importlib.metadata import PackageNotFoundError as DistributionNotFound
+from importlib.metadata import distribution as get_distribution
+
+from packaging.version import parse as parse_version
 from setuptools import find_packages, setup
 
 EXT_TYPE = ''
@@ -47,8 +50,9 @@ def choose_requirement(primary, secondary):
 def get_version():
     version_file = 'mmcv/version.py'
     with open(version_file, encoding='utf-8') as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
+        version_ns = {}
+        exec(compile(f.read(), version_file, 'exec'), version_ns)
+    return version_ns['__version__']
 
 
 def parse_requirements(fname='requirements/runtime.txt', with_version=True):
@@ -142,6 +146,27 @@ except ImportError:
         install_requires.append(choose_requirement(main, secondary))
 
 
+def get_cxx_std():
+    """Return the C++ standard the installed PyTorch headers require.
+
+    PyTorch <= 1.12.1 builds with C++14, later releases with C++17, and
+    recent releases refuse to compile below C++20. The last case is detected
+    from the headers so that one setup.py serves old and new PyTorch.
+    """
+    if parse_version(torch.__version__) <= parse_version('1.12.1'):
+        return '14'
+    header = os.path.join(
+        os.path.dirname(torch.__file__), 'include', 'torch', 'csrc', 'api',
+        'include', 'torch', 'all.h')
+    try:
+        with open(header, encoding='utf-8') as f:
+            if 'C++20 or later' in f.read():
+                return '20'
+    except OSError:
+        pass
+    return '17'
+
+
 def get_extensions():
     extensions = []
 
@@ -208,16 +233,11 @@ def get_extensions():
         # More details at https://github.com/pytorch/pytorch/pull/45956
         extra_compile_args = {'cxx': []}
 
+        cxx_std = get_cxx_std()
         if platform.system() != 'Windows':
-            if parse_version(torch.__version__) <= parse_version('1.12.1'):
-                extra_compile_args['cxx'] = ['-std=c++14']
-            else:
-                extra_compile_args['cxx'] = ['-std=c++17']
+            extra_compile_args['cxx'] = [f'-std=c++{cxx_std}']
         else:
-            if parse_version(torch.__version__) <= parse_version('1.12.1'):
-                extra_compile_args['cxx'] = ['/std:c++14']
-            else:
-                extra_compile_args['cxx'] = ['/std:c++17']
+            extra_compile_args['cxx'] = [f'/std:c++{cxx_std}']
 
         include_dirs = []
         library_dirs = []
@@ -403,7 +423,7 @@ def get_extensions():
 
             define_macros += [('MMCV_WITH_MPS', None)]
             extra_compile_args = {}
-            extra_compile_args['cxx'] = ['-Wall', '-std=c++17']
+            extra_compile_args['cxx'] = ['-Wall', f'-std=c++{get_cxx_std()}']
             extra_compile_args['cxx'] += [
                 '-framework', 'Metal', '-framework', 'Foundation'
             ]
@@ -481,10 +501,7 @@ def get_extensions():
         # to compile those cpp files, so there is no need to add the
         # argument
         if 'nvcc' in extra_compile_args and platform.system() != 'Windows':
-            if parse_version(torch.__version__) <= parse_version('1.12.1'):
-                extra_compile_args['nvcc'] += ['-std=c++14']
-            else:
-                extra_compile_args['nvcc'] += ['-std=c++17']
+            extra_compile_args['nvcc'] += [f'-std=c++{get_cxx_std()}']
 
         ext_ops = extension(
             name=ext_name,
